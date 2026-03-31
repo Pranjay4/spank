@@ -21,13 +21,34 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Decide release mode
+        id: mode
+        env:
+          HAS_CERT_B64: ${{ secrets.MACOS_CERTIFICATES_P12_BASE64 }}
+          HAS_CERT_PASS: ${{ secrets.MACOS_CERTIFICATES_P12_PASSWORD }}
+          HAS_APP_CERT: ${{ secrets.DEVELOPER_ID_APP_CERT }}
+          HAS_INSTALLER_CERT: ${{ secrets.DEVELOPER_ID_INSTALLER_CERT }}
+          HAS_APPLE_ID: ${{ secrets.APPLE_ID }}
+          HAS_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HAS_APP_PW: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [[ -n "$HAS_CERT_B64" && -n "$HAS_CERT_PASS" && -n "$HAS_APP_CERT" && -n "$HAS_INSTALLER_CERT" && -n "$HAS_APPLE_ID" && -n "$HAS_TEAM_ID" && -n "$HAS_APP_PW" ]]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+            echo "Using signed + notarized release mode"
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "Using unsigned release mode (some signing/notarization secrets are missing)"
+          fi
+
       - name: Import Developer ID certificates
+        if: steps.mode.outputs.mode == 'signed'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATES_P12_BASE64 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATES_P12_PASSWORD }}
 
       - name: Configure notarytool profile
+        if: steps.mode.outputs.mode == 'signed'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -39,12 +60,31 @@ jobs:
             --password "$APPLE_APP_SPECIFIC_PASSWORD"
 
       - name: Build, sign, notarize, staple
+        if: steps.mode.outputs.mode == 'signed'
         env:
           VERSION: ${{ github.event.release.tag_name || github.ref_name }}
           DEVELOPER_ID_APP_CERT: ${{ secrets.DEVELOPER_ID_APP_CERT }}
           DEVELOPER_ID_INSTALLER_CERT: ${{ secrets.DEVELOPER_ID_INSTALLER_CERT }}
           NOTARY_KEYCHAIN_PROFILE: spank-notary
         run: ./scripts/release-notarized-pkg.sh
+
+      - name: Build unsigned package (fallback)
+        if: steps.mode.outputs.mode == 'unsigned'
+        env:
+          VERSION: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          rm -rf pkgroot dist/pkg
+          mkdir -p pkgroot/usr/local/bin dist/pkg
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o pkgroot/usr/local/bin/spank .
+          chmod 755 pkgroot/usr/local/bin/spank
+          pkgbuild \
+            --root pkgroot \
+            --identifier com.taigrr.spank \
+            --version "$VERSION" \
+            --install-location / \
+            "dist/pkg/spank-${VERSION}-macos-arm64-unsigned.pkg"
+          shasum -a 256 dist/pkg/*.pkg > dist/pkg/checksums.txt
 
       - name: Upload package artifacts
         uses: softprops/action-gh-release@v2

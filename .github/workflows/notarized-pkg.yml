@@ -1,0 +1,55 @@
+name: Notarized PKG
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notarized-pkg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Import Developer ID certificates
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATES_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATES_P12_PASSWORD }}
+
+      - name: Configure notarytool profile
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "spank-notary" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD"
+
+      - name: Build, sign, notarize, staple
+        env:
+          VERSION: ${{ github.event.release.tag_name || github.ref_name }}
+          DEVELOPER_ID_APP_CERT: ${{ secrets.DEVELOPER_ID_APP_CERT }}
+          DEVELOPER_ID_INSTALLER_CERT: ${{ secrets.DEVELOPER_ID_INSTALLER_CERT }}
+          NOTARY_KEYCHAIN_PROFILE: spank-notary
+        run: ./scripts/release-notarized-pkg.sh
+
+      - name: Upload package artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          files: |
+            dist/pkg/*.pkg
+            dist/pkg/checksums.txt

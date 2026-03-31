@@ -38,6 +38,53 @@ go install github.com/taigrr/spank@latest
 > sudo cp "$(go env GOPATH)/bin/spank" /usr/local/bin/spank
 > ```
 
+## Publishing a Notarized macOS Installer
+
+For the easiest end-user install experience, publish a signed + notarized `.pkg`.
+
+1. Import your Apple Developer certificates into Keychain Access:
+   - `Developer ID Application: ...`
+   - `Developer ID Installer: ...`
+
+2. Create a notarytool keychain profile once:
+
+```bash
+xcrun notarytool store-credentials "spank-notary" \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "YOUR_TEAM_ID" \
+  --password "YOUR_APP_SPECIFIC_PASSWORD"
+```
+
+3. Build, sign, notarize, and staple the package:
+
+```bash
+DEVELOPER_ID_APP_CERT="Developer ID Application: YOUR NAME (TEAMID)" \
+DEVELOPER_ID_INSTALLER_CERT="Developer ID Installer: YOUR NAME (TEAMID)" \
+NOTARY_KEYCHAIN_PROFILE="spank-notary" \
+./scripts/release-notarized-pkg.sh
+```
+
+The script outputs a notarized package at `dist/pkg/*.pkg` and SHA256 checksum at `dist/pkg/checksums.txt`.
+
+### GitHub Actions (automatic notarized package)
+
+This repository includes `.github/workflows/notarized-pkg.yml`.
+
+It runs when a GitHub Release is published (or manually via workflow dispatch), builds a signed and notarized package, and uploads:
+
+- `dist/pkg/*.pkg`
+- `dist/pkg/checksums.txt`
+
+Set these GitHub repository secrets before using it:
+
+- `MACOS_CERTIFICATES_P12_BASE64` — base64 of a `.p12` containing your Developer ID cert(s)
+- `MACOS_CERTIFICATES_P12_PASSWORD` — password for that `.p12`
+- `DEVELOPER_ID_APP_CERT` — exact certificate name, e.g. `Developer ID Application: Your Name (TEAMID)`
+- `DEVELOPER_ID_INSTALLER_CERT` — exact certificate name, e.g. `Developer ID Installer: Your Name (TEAMID)`
+- `APPLE_ID` — your Apple ID email
+- `APPLE_TEAM_ID` — your Apple Developer Team ID
+- `APPLE_APP_SPECIFIC_PASSWORD` — Apple app-specific password for notarization
+
 ## Usage
 
 ```bash
